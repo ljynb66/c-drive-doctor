@@ -10,6 +10,8 @@ import time
 
 GB = 1024 ** 3
 MB = 1024 ** 2
+KB = 1024
+ 
 
 SAFE_DIR_NAMES = {
     "$recycle.bin",
@@ -42,7 +44,11 @@ RECYCLE_BIN_PATH = "C:\\$Recycle.Bin"
 def format_size(size):
     if size >= GB:
         return f"{size / GB:.2f} GB"
-    return f"{size / MB:.2f} MB"
+    if size >= MB:
+        return f"{size / MB:.2f} MB"
+    if size >= KB:
+        return f"{size / KB:.2f} KB"
+    return f"{size} B"
 
 
 def format_delta(value):
