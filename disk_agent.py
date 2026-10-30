@@ -8,15 +8,13 @@ import config
 ROOT = "C:\\"
 GB = 1024 ** 3
 CACHE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scan_cache.json")
+MAX_MESSAGES = 20
 
-SYSTEM = """你是一个 Windows C 盘空间分析助手。
-你可以调用工具查看磁盘情况。回答用中文、简洁、给出具体数字。
-所有数字必须来自工具返回，不要凭空猜测。"""
 SYSTEM = """你是一个 Windows C 盘空间分析助手。
 你可以调用工具查看磁盘情况。回答用中文、简洁、给出具体数字。
 所有数字必须来自工具返回，不要凭空猜测。
-这台电脑只有 C 盘一个分区（约 923 GB），没有 D 盘等其他磁盘，所以不要建议"转移到其他盘"。"""
-
+这台电脑只有 C 盘一个分区（约 923 GB），没有 D 盘等其他磁盘，所以不要建议「转移到其他盘」。
+你没有删除文件的能力。如果用户要求删除，只能建议他自己操作，并说明风险。"""
 
 tools = [
     {
@@ -60,7 +58,8 @@ def get_disk_space():
 
 def scan_top_dirs(limit=8):
     if os.path.exists(CACHE):
-        data = json.load(open(CACHE, encoding="utf-8"))
+        with open(CACHE, encoding="utf-8") as f:
+            data = json.load(f)
         return json.dumps(data[:limit], ensure_ascii=False)
 
     totals = {}
@@ -104,36 +103,63 @@ def call_model(messages):
     return resp.json()["choices"][0]["message"]
 
 
-messages = [
-    {"role": "system", "content": SYSTEM},
-    {"role": "user", "content": input("你：")},
-]
+def run_turn(messages):
+    for step in range(6):
+        message = call_model(messages)
+        calls = message.get("tool_calls") or []
 
-for step in range(6):
-    message = call_model(messages)
-    calls = message.get("tool_calls") or []
+        if not calls:
+            print("\nAI：", message["content"], flush=True)
+            return
 
-    if not calls:
-        print("\nAI：", message["content"])
-        break
-
-    messages.append(
-        {
-            "role": "assistant",
-            "content": message.get("content") or "",
-            "tool_calls": [
-                {"id": c["id"], "type": "function", "function": c["function"]}
-                for c in calls
-            ],
-        }
-    )
-
-    for c in calls:
-        name = c["function"]["name"]
-        args = json.loads(c["function"]["arguments"] or "{}")
-        print(f"  [调用] {name} {args}", flush=True)
-        result = run_tool(name, args)
-        print(f"  [结果] {result[:300]}", flush=True)
         messages.append(
-            {"role": "tool", "tool_call_id": c["id"], "content": result}
+            {
+                "role": "assistant",
+                "content": message.get("content") or "",
+                "tool_calls": [
+                    {"id": c["id"], "type": "function", "function": c["function"]}
+                    for c in calls
+                ],
+            }
         )
+
+        for c in calls:
+            name = c["function"]["name"]
+            args = json.loads(c["function"]["arguments"] or "{}")
+            print(f"  [调用] {name} {args}", flush=True)
+            result = run_tool(name, args)
+            print(f"  [结果] {result[:300]}", flush=True)
+            messages.append(
+                {"role": "tool", "tool_call_id": c["id"], "content": result}
+            )
+
+    print("\n（本轮工具调用次数超上限，已停止）", flush=True)
+
+
+def main():
+    print("C 盘空间助手已启动。输入 exit 退出。")
+    messages = [{"role": "system", "content": SYSTEM}]
+
+    while True:
+        try:
+            question = input("\n你：").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n再见。")
+            return
+
+        if question.lower() in ("exit", "quit", "q", "退出"):
+            print("再见。")
+            return
+        if not question:
+            continue
+
+        messages.append({"role": "user", "content": question})
+
+        if len(messages) > MAX_MESSAGES:
+            messages = [messages[0]] + messages[-12:]
+
+        run_turn(messages)
+
+
+if __name__ == "__main__":
+    main()
