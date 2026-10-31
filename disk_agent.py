@@ -14,7 +14,8 @@ SYSTEM = """你是一个 Windows C 盘空间分析助手。
 你可以调用工具查看磁盘情况。回答用中文、简洁、给出具体数字。
 所有数字必须来自工具返回，不要凭空猜测。
 这台电脑只有 C 盘一个分区（约 923 GB），没有 D 盘等其他磁盘，所以不要建议「转移到其他盘」。
-你没有删除文件的能力。如果用户要求删除，只能建议他自己操作，并说明风险。"""
+你没有删除文件的能力。如果用户要求删除，只能建议他自己操作，并说明风险。
+只想看某个目录的细分时，用 list_subdirs，不要重复扫全盘。"""
 
 tools = [
     {
@@ -38,6 +39,27 @@ tools = [
                         "description": "返回前几名，默认 8",
                     }
                 },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_subdirs",
+            "description": "查看指定目录下最大的几个子目录（只统计两层，比全盘扫描快得多）",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "要查看的目录，例如 C:\\Program Files (x86)",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "返回前几名，默认 10",
+                    },
+                },
+                "required": ["path"],
             },
         },
     },
@@ -86,11 +108,46 @@ def scan_top_dirs(limit=8):
     return json.dumps(rows[:limit], ensure_ascii=False)
 
 
+def list_subdirs(path, limit=10):
+    path = os.path.normpath(path)
+    if not path.lower().startswith("c:\\"):
+        return json.dumps({"错误": "只允许查看 C 盘内的目录"}, ensure_ascii=False)
+    if not os.path.isdir(path):
+        return json.dumps({"错误": f"目录不存在：{path}"}, ensure_ascii=False)
+
+    totals = {}
+    skips = scan.SkipTracker()
+    scan.scan_directory(path, 0, 1, totals, skips)
+
+    prefix = path.lower()
+    children = [
+        p
+        for p in totals
+        if os.path.normpath(p).lower() != prefix
+        and os.path.dirname(os.path.normpath(p)).lower() == prefix
+    ]
+
+    rows = []
+    for p in sorted(children):
+        print(f"    正在统计：{p}", flush=True)
+        progress = scan.new_progress()
+        size = scan.full_scan(p, set(), {}, progress, skips)
+        rows.append({"目录": p, "大小GB": round(size / GB, 2)})
+
+    if not rows:
+        return json.dumps({"提示": f"{path} 下没有可读的子目录"}, ensure_ascii=False)
+
+    rows.sort(key=lambda r: -r["大小GB"])
+    return json.dumps(rows[:limit], ensure_ascii=False)
+
+
 def run_tool(name, args):
     if name == "get_disk_space":
         return get_disk_space()
     if name == "scan_top_dirs":
         return scan_top_dirs(args.get("limit", 8))
+    if name == "list_subdirs":
+        return list_subdirs(args.get("path", ROOT), args.get("limit", 10))
     return f"未知工具：{name}"
 
 
