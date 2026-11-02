@@ -1,2 +1,3 @@
-Send2Trash
-requests
+# 依赖版本已锁定为开发时实测通过的版本
+requests==2.34.2
+Send2Trash==2.1.0
